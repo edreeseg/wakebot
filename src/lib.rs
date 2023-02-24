@@ -81,14 +81,14 @@ impl Handler {
                 .cmp(&DateTime::parse_from_rfc3339(&b.timestamp).unwrap())
         });
         let updated_timestamp = DateTime::parse_from_rfc3339(&video_list.last().unwrap().timestamp);
-        let video_list = video_result
+        let video_string = video_result
             .list
             .to_vec()
             .iter()
             .enumerate()
             .map(|(idx, item)| {
                 format!(
-                    "{}. [{}](https://www.youtube.com/watch?v={})",
+                    "{}. {} - https://www.youtube.com/watch?v={}",
                     idx + 1,
                     item.title,
                     item.id
@@ -96,13 +96,16 @@ impl Handler {
             })
             .fold(String::new(), |a, b| a + &b + "\n");
         let msg = if video_result.overflow {
-            format!("More than five videos have been added to Bael's playlist since {}.\nDisplaying the last five.\n{}", timestamp, video_list)
+            format!("More than five videos have been added to Bael's playlist since {} UTC.\nDisplaying the last five.\n\n{}", timestamp, video_string)
         } else {
+            let has_one_video = video_list.len() == 1;
             format!(
-                "{} videos have been added to Bael's playlist since {}.\n{}",
+                "{} video{} {} been added to Bael's playlist since {} UTC.\n\n{}",
                 video_list.len(),
+                if has_one_video { "" } else { "s" },
+                if has_one_video { "has" } else { "have" },
                 timestamp,
-                video_list
+                video_string
             )
         };
         match triggering_msg.channel_id.say(&ctx.http, msg).await {
@@ -120,11 +123,21 @@ impl Handler {
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
-        if msg.author.name == "Roren"
-            && msg.author.discriminator == 5950
-            && msg.content.eq("!wakebot init")
-        {
-            self.send_update_message(ctx, msg).await;
+        if msg.author.name == "Roren" && msg.author.discriminator == 5950 {
+            if msg.content.eq("!wakebot init") {
+                self.send_update_message(ctx, msg).await;
+            } else if msg.content.eq("!wakebot reset") {
+                self.persist
+                    .save(
+                        "timestamp",
+                        DateTime::parse_from_rfc3339(DEFAULT_TIMESTAMP).unwrap(),
+                    )
+                    .unwrap();
+                msg.channel_id
+                    .say(&ctx.http, "Timestamp reset")
+                    .await
+                    .unwrap();
+            }
         }
     }
     async fn ready(&self, _ctx: Context, ready: Ready) {
@@ -151,7 +164,8 @@ pub async fn serenity(
         return Err(anyhow!("'YOUTUBE_API_KEY' was not found").into());
     };
 
-    let intents = GatewayIntents::GUILDS | GatewayIntents::GUILD_MESSAGES;
+    let intents =
+        GatewayIntents::GUILDS | GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
 
     let mut client = Client::builder(&discord_token, intents)
         .event_handler(Handler {
