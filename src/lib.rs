@@ -38,7 +38,11 @@ impl Handler {
         Ok(new_videos)
     }
 
-    async fn send_update_message(&self, ctx: Context, channel: &GuildChannel) {
+    async fn send_update_message(
+        &self,
+        ctx: Context,
+        triggering_msg: serenity::model::channel::Message,
+    ) {
         let video_result = if let Ok(result) = self.retrieve().await {
             result
         } else {
@@ -52,7 +56,8 @@ impl Handler {
         let timestamp = timestamp.format("%Y/%m/%d %H:%M:%S");
         let mut video_list = video_result.list.to_vec();
         if video_list.is_empty() {
-            match channel
+            match triggering_msg
+                .channel_id
                 .say(
                     &ctx.http,
                     format!("No videos added to Bael's playlist since {}", timestamp),
@@ -100,7 +105,7 @@ impl Handler {
                 video_list
             )
         };
-        match channel.say(&ctx.http, msg).await {
+        match triggering_msg.channel_id.say(&ctx.http, msg).await {
             Ok(msg) => println!("Message sent: {:#?}", msg),
             Err(e) => println!("Error sending message: {}", e),
         }
@@ -108,7 +113,7 @@ impl Handler {
             .save::<DateTime<FixedOffset>>("timestamp", updated_timestamp.unwrap())
             .expect("Problem persisting timestamp.");
         tokio::time::sleep(Duration::from_secs(60 * 60 * 24)).await; // One day
-        let _ = self.send_update_message(ctx, channel);
+        let _ = self.send_update_message(ctx, triggering_msg);
     }
 }
 
@@ -117,18 +122,15 @@ impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         if msg.author.name == "Roren"
             && msg.author.discriminator == 5950
-            && msg.content == "!wakebot check"
+            && msg.content.eq("!wakebot init")
         {
-            if let Err(why) = msg.channel_id.say(&ctx.http, "Pong!").await {
-                println!("Error sending message: {:?}", why);
-            }
+            self.send_update_message(ctx, msg).await;
         }
     }
-    async fn ready(&self, _: Context, ready: Ready) {
+    async fn ready(&self, _ctx: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
     }
-    async fn channel_create(&self, ctx: Context, channel: &GuildChannel) {
-        self.send_update_message(ctx, channel).await;
+    async fn channel_create(&self, _ctx: Context, _channel: &GuildChannel) {
         println!("Channel create");
     }
 }
