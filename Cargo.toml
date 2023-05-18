@@ -16,6 +16,7 @@ regex = "1.7.1"
 reqwest = { version = "0.11.14", features = ["blocking", "json"] }
 serde = "1.0.152"
 serenity = { version = "0.11.5", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
+shunting = "0.1.2"
 shuttle-persist = "0.10.0"
 shuttle-secrets = "0.10.0"
 shuttle-service = { version = "0.10.0", features = ["bot-serenity"] }
