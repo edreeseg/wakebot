@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use chrono::{DateTime, FixedOffset, Utc};
 use regex::Regex;
-use rolls::{calculate_roll_string, INDIVIDUAL_ROLL_REGEX, ROLL_REGEX};
+use rolls::{calculate_roll_string, ROLL_REGEX};
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
