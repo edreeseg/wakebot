@@ -75,18 +75,23 @@ fn resolve_dice_roll(roll_string: &str) -> Result<(String, Vec<i32>, Vec<i32>), 
     Ok((total.to_string(), rolls, discarded_rolls))
 }
 
-pub fn calculate_roll_string(roll: &str) -> (f64, Vec<(String, Vec<i32>, Vec<i32>)>) {
+pub fn calculate_roll_string(roll: &str) -> (f64, Vec<(String, String, Vec<i32>, Vec<i32>)>) {
     let regex = Regex::new(INDIVIDUAL_ROLL_REGEX).unwrap();
     let mut roll = String::from(roll);
 
     let mut done = false;
-    let mut roll_representation: Vec<(String, Vec<i32>, Vec<i32>)> = vec![];
+    let mut roll_representation: Vec<(String, String, Vec<i32>, Vec<i32>)> = vec![];
     while !done {
         let mut resolved_roll = None;
         let range = regex.find(&roll).map(|mat| {
             if let Ok((result, rolls, discarded_rolls)) = resolve_dice_roll(mat.as_str()) {
                 resolved_roll = Some(result);
-                roll_representation.push((String::from(mat.as_str()), rolls, discarded_rolls))
+                roll_representation.push((
+                    resolved_roll.clone().unwrap(),
+                    String::from(mat.as_str()),
+                    rolls,
+                    discarded_rolls,
+                ))
             } else {
                 panic!("Matched w/ range but no dice resolution.");
             }

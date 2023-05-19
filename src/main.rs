@@ -142,9 +142,9 @@ impl EventHandler for Handler {
                         "{}\n{}",
                         rolls
                             .iter()
-                            .map(|(roll, list, discarded_list)| {
+                            .map(|(total, roll, list, discarded_list)| {
                                 format!(
-                                    "{} ({}{})",
+                                    "{total} <- {} ({}{})",
                                     roll,
                                     list.iter()
                                         .map(|n| n.to_string())
