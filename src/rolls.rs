@@ -4,7 +4,8 @@ use regex::Regex;
 use shunting::{MathContext, ShuntingParser};
 
 pub const INDIVIDUAL_ROLL_REGEX: &str = r"(\d+)?d(\d+)((k|(kh)|(kl))(\d+))?";
-pub const ROLL_REGEX: &str = r"^!(((\d+)?d(\d+)((k|(kh)|(kl))(\d+))?)| |\d+|[+*/)()-])+$";
+pub const ROLL_REGEX: &str = r"^(((\d+)?d(\d+)((k|(kh)|(kl))(\d+))?)| |\d+|[+*/)()-])+$";
+pub const ROLL_COMMAND_REGEX: &str = r"^!(((\d+)?d(\d+)((k|(kh)|(kl))(\d+))?)| |\d+|[+*/)()-])+$";
 const MAX_QUANTITY: usize = 1000;
 
 // Need to create human-readable summary of rolls
@@ -103,7 +104,62 @@ pub fn calculate_roll_string(roll: &str) -> (f64, Vec<(String, String, Vec<i32>,
             done = true;
         }
     }
-    let expr = ShuntingParser::parse_str(&roll[1..]).unwrap();
+    let roll_sans_exclamation = if roll.starts_with("!") {
+        &roll[1..]
+    } else {
+        &roll
+    };
+    let expr = ShuntingParser::parse_str(roll_sans_exclamation).unwrap();
     let result = MathContext::new().eval(&expr).unwrap();
     (result, roll_representation)
+}
+
+pub fn format_rolls_result(
+    original_string: &str,
+    input: (f64, Vec<(String, String, Vec<i32>, Vec<i32>)>),
+) -> String {
+    let (result, rolls) = input;
+    let d20_regex = Regex::new(r"^\d+?d20").unwrap();
+    format!(
+        "{}\n{}\n{}",
+        original_string,
+        rolls
+            .iter()
+            .map(|(total, roll, list, discarded_list)| {
+                format!(
+                    "{} <- {} ({}{}){}",
+                    total,
+                    roll,
+                    list.iter()
+                        .map(|n| n.to_string())
+                        .collect::<Vec<String>>()
+                        .join(", "),
+                    if discarded_list.len() == 0 {
+                        String::from("")
+                    } else {
+                        String::from(", ")
+                            + &discarded_list
+                                .iter()
+                                .map(|n| String::from("~~") + &n.to_string() + "~~")
+                                .collect::<Vec<String>>()
+                                .join(", ")
+                    },
+                    {
+                        let mut str = String::from("");
+                        if d20_regex.is_match(roll) {
+                            if list.contains(&20) {
+                                str += " - **CRITICAL SUCCESS!**";
+                            }
+                            if list.contains(&1) {
+                                str += " - **CRITICAL FAILURE!**";
+                            }
+                        }
+                        str
+                    }
+                )
+            })
+            .collect::<Vec<String>>()
+            .join("\n"),
+        String::from("**") + &result.to_string() + "**"
+    )
 }

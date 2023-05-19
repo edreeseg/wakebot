@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use chrono::{DateTime, FixedOffset, Utc};
 use regex::Regex;
-use rolls::{calculate_roll_string, ROLL_REGEX};
+use rolls::{calculate_roll_string, format_rolls_result, ROLL_COMMAND_REGEX, ROLL_REGEX};
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
@@ -9,6 +9,7 @@ use serenity::model::prelude::GuildChannel;
 use serenity::prelude::*;
 use shuttle_persist::PersistInstance;
 use shuttle_secrets::SecretStore;
+use std::collections::HashMap;
 use std::time::Duration;
 use youtube::VideoResult;
 
@@ -129,77 +130,106 @@ impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         let content = msg.content.trim();
         let creator_message = msg.author.name == "Roren" && msg.author.discriminator == 5950;
-        let dice_regex = Regex::new(ROLL_REGEX).unwrap();
-        if self.allowed_channels.contains(&msg.channel_id.to_string())
-            && dice_regex.is_match(content)
-        {
-            // Error handling needed
-            let (result, rolls) = calculate_roll_string(content);
-            let d20_regex = Regex::new(r"^\d+?d20").unwrap();
-            match msg
-                .reply(
-                    &ctx.http,
-                    format!(
-                        "{}\n{}",
-                        rolls
-                            .iter()
-                            .map(|(total, roll, list, discarded_list)| {
-                                format!(
-                                    "{} <- {} ({}{}){}",
-                                    total,
-                                    roll,
-                                    list.iter()
-                                        .map(|n| n.to_string())
-                                        .collect::<Vec<String>>()
-                                        .join(", "),
-                                    if discarded_list.len() == 0 {
-                                        String::from("")
-                                    } else {
-                                        String::from(", ")
-                                            + &discarded_list
-                                                .iter()
-                                                .map(|n| String::from("~~") + &n.to_string() + "~~")
-                                                .collect::<Vec<String>>()
-                                                .join(", ")
-                                    },
-                                    {
-                                        let mut str = String::from("");
-                                        if d20_regex.is_match(roll) {
-                                            if list.contains(&20) {
-                                                str += " - **CRITICAL SUCCESS!**";
-                                            }
-                                            if list.contains(&1) {
-                                                str += " - **CRITICAL FAILURE!**";
-                                            }
-                                        }
-                                        str
-                                    }
+        let dice_command_regex = Regex::new(ROLL_COMMAND_REGEX).unwrap();
+        if self.allowed_channels.contains(&msg.channel_id.to_string()) {
+            if content.starts_with("!action ") {
+                let args = content.split(" ").collect::<Vec<&str>>();
+                if args.len() < 2 || args.len() > 3 {
+                    msg.reply(&ctx.http, "Invalid request sent for action.\nTo add, format like: !action <name> <roll>\nTo use, format like: !action <name>").await.expect("Failed to reply");
+                }
+                let action_name = String::from(args[1]);
+                let valid_action_regex = Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
+                if !valid_action_regex.is_match(&action_name) {
+                    msg.reply(&ctx.http, "Invalid action name")
+                        .await
+                        .expect("Failed to reply");
+                    return;
+                }
+                if args.len() == 2 {
+                    // Add action to persist
+                    if let Ok(actions) = self.persist.load::<HashMap<String, String>>("actions") {
+                        if let Some(roll) = actions.get(&action_name) {
+                            // Use roll
+                            let rolls_result = calculate_roll_string(roll);
+                            match msg
+                                .reply(
+                                    &ctx.http,
+                                    format!(
+                                        "{}\n{}",
+                                        String::from("**") + &action_name + "**",
+                                        format_rolls_result(roll, rolls_result)
+                                    ),
                                 )
-                            })
-                            .collect::<Vec<String>>()
-                            .join("\n"),
-                        String::from("**") + &result.to_string() + "**"
-                    ),
-                )
-                .await
-            {
-                Ok(_) => println!("Reply sent with result"),
-                Err(e) => println!("There was a problem sending result: {}", e),
-            };
-        }
+                                .await
+                            {
+                                Ok(_) => println!("Reply sent with result"),
+                                Err(e) => println!("There was a problem sending result: {}", e),
+                            };
+                        } else {
+                            msg.reply(
+                                &ctx.http,
+                                format!("No action called '{}' found.", action_name),
+                            )
+                            .await
+                            .expect("Failed to reply");
+                            return;
+                        }
+                    }
+                } else if args.len() == 3 {
+                    if let Ok(mut actions) = self.persist.load::<HashMap<String, String>>("actions")
+                    {
+                        let roll_input = String::from(args[2]);
+                        // Use regex to validate roll string
+                        let roll_regex = Regex::new(ROLL_REGEX).unwrap();
+                        if !roll_regex.is_match(&roll_input) {
+                            msg.reply(&ctx.http, "Invalid roll string")
+                                .await
+                                .expect("Failed to reply");
+                            return;
+                        }
+                        let had_action = actions.contains_key(&action_name);
+                        actions.insert(action_name.clone(), roll_input);
+                        self.persist
+                            .save("actions", actions)
+                            .expect("Failed to save new action.");
+                        msg.reply(
+                            &ctx.http,
+                            format!(
+                                "Action '{}' {}.",
+                                action_name,
+                                if had_action { "updated" } else { "added" }
+                            ),
+                        )
+                        .await
+                        .expect("Failed to reply");
+                    }
+                }
+            }
+            if dice_command_regex.is_match(content) {
+                // Error handling needed
+                let rolls_result = calculate_roll_string(content);
+                match msg
+                    .reply(&ctx.http, format_rolls_result(content, rolls_result))
+                    .await
+                {
+                    Ok(_) => println!("Reply sent with result"),
+                    Err(e) => println!("There was a problem sending result: {}", e),
+                };
+            }
 
-        if creator_message {
-            if content.eq("!wakebot init") {
-                self.send_update_message(ctx, msg).await;
-            } else if content.eq("!wakebot reset") {
-                std::process::Command::new("ping");
-                self.persist
-                    .save(
-                        "timestamp",
-                        DateTime::parse_from_rfc3339(DEFAULT_TIMESTAMP).unwrap(),
-                    )
-                    .unwrap();
-                msg.channel_id.say(&ctx.http, "Bot reset").await.unwrap();
+            if creator_message {
+                if content.eq("!wakebot init") {
+                    self.send_update_message(ctx, msg).await;
+                } else if content.eq("!wakebot reset") {
+                    std::process::Command::new("ping");
+                    self.persist
+                        .save(
+                            "timestamp",
+                            DateTime::parse_from_rfc3339(DEFAULT_TIMESTAMP).unwrap(),
+                        )
+                        .unwrap();
+                    msg.channel_id.say(&ctx.http, "Bot reset").await.unwrap();
+                }
             }
         }
     }
@@ -240,6 +270,13 @@ pub async fn serenity(
 
     let intents =
         GatewayIntents::GUILDS | GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+
+    if let Err(_) = persist.load::<HashMap<String, String>>("actions") {
+        let actions_map: HashMap<String, String> = HashMap::new();
+        persist
+            .save("actions", actions_map)
+            .expect("Failed to create actions map.");
+    }
 
     let mut client = Client::builder(&discord_token, intents)
         .event_handler(Handler {
