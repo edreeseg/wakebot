@@ -135,7 +135,7 @@ impl EventHandler for Handler {
         {
             // Error handling needed
             let (result, rolls) = calculate_roll_string(content);
-            let d20_regex = Regex::new(r"^1?d20").unwrap();
+            let d20_regex = Regex::new(r"^\d+?d20").unwrap();
             match msg
                 .reply(
                     &ctx.http,
