@@ -135,6 +135,7 @@ impl EventHandler for Handler {
         {
             // Error handling needed
             let (result, rolls) = calculate_roll_string(content);
+            let d20_regex = Regex::new(r"^1?d20").unwrap();
             match msg
                 .reply(
                     &ctx.http,
@@ -144,7 +145,8 @@ impl EventHandler for Handler {
                             .iter()
                             .map(|(total, roll, list, discarded_list)| {
                                 format!(
-                                    "{total} <- {} ({}{})",
+                                    "{} <- {} ({}{}){}",
+                                    total,
                                     roll,
                                     list.iter()
                                         .map(|n| n.to_string())
@@ -159,6 +161,18 @@ impl EventHandler for Handler {
                                                 .map(|n| String::from("~~") + &n.to_string() + "~~")
                                                 .collect::<Vec<String>>()
                                                 .join(", ")
+                                    },
+                                    {
+                                        let mut str = String::from("");
+                                        if d20_regex.is_match(roll) {
+                                            if list.contains(&20) {
+                                                str += " - **CRITICAL SUCCESS!**";
+                                            }
+                                            if list.contains(&1) {
+                                                str += " - **CRITICAL FAILURE!**";
+                                            }
+                                        }
+                                        str
                                     }
                                 )
                             })
