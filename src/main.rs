@@ -134,7 +134,7 @@ impl EventHandler for Handler {
         if self.allowed_channels.contains(&msg.channel_id.to_string()) {
             if content.starts_with("!action ") {
                 let args = content.split(" ").collect::<Vec<&str>>();
-                if args.len() < 2 || args.len() > 3 {
+                if args.len() < 2 {
                     msg.reply(&ctx.http, "Invalid request sent for action.\nTo add, format like: !action <name> <roll>\nTo use, format like: !action <name>").await.expect("Failed to reply");
                 }
                 let action_name = String::from(args[1]);
@@ -175,10 +175,10 @@ impl EventHandler for Handler {
                             return;
                         }
                     }
-                } else if args.len() == 3 {
+                } else {
                     if let Ok(mut actions) = self.persist.load::<HashMap<String, String>>("actions")
                     {
-                        let roll_input = String::from(args[2]);
+                        let roll_input = args[2..].join(" ");
                         // Use regex to validate roll string
                         let roll_regex = Regex::new(ROLL_REGEX).unwrap();
                         if !roll_regex.is_match(&roll_input) {
