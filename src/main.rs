@@ -142,19 +142,29 @@ impl EventHandler for Handler {
                         "{}\n{}",
                         rolls
                             .iter()
-                            .map(|(roll, list)| {
+                            .map(|(roll, list, discarded_list)| {
                                 format!(
-                                    "{} ({})",
+                                    "{} ({}{})",
                                     roll,
                                     list.iter()
                                         .map(|n| n.to_string())
                                         .collect::<Vec<String>>()
-                                        .join(", ")
+                                        .join(", "),
+                                    if discarded_list.len() == 0 {
+                                        String::from("")
+                                    } else {
+                                        String::from(", ")
+                                            + &discarded_list
+                                                .iter()
+                                                .map(|n| String::from("~~") + &n.to_string() + "~~")
+                                                .collect::<Vec<String>>()
+                                                .join(", ")
+                                    }
                                 )
                             })
                             .collect::<Vec<String>>()
                             .join("\n"),
-                        result
+                        String::from("**") + &result.to_string() + "**"
                     ),
                 )
                 .await
@@ -187,11 +197,11 @@ impl EventHandler for Handler {
     }
 }
 
-#[shuttle_service::main]
+#[shuttle_runtime::main]
 pub async fn serenity(
     #[shuttle_secrets::Secrets] secret_store: SecretStore,
     #[shuttle_persist::Persist] persist: PersistInstance,
-) -> shuttle_service::ShuttleSerenity {
+) -> shuttle_serenity::ShuttleSerenity {
     let discord_token = if let Some(token) = secret_store.get("DISCORD_TOKEN") {
         token
     } else {
@@ -229,5 +239,5 @@ pub async fn serenity(
     if let Err(why) = client.start().await {
         println!("Client error: {:?}", why);
     }
-    Ok(client)
+    Ok(client.into())
 }

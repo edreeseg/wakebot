@@ -9,7 +9,7 @@ const MAX_QUANTITY: usize = 1000;
 
 // Need to create human-readable summary of rolls
 
-fn resolve_dice_roll(roll_string: &str) -> Result<(String, Vec<i32>), WakeBotError> {
+fn resolve_dice_roll(roll_string: &str) -> Result<(String, Vec<i32>, Vec<i32>), WakeBotError> {
     // let roll_string = roll_string.trim_matches(|c: char| c.eq(&'(') || c.eq(&')'));
     let roll_regex = Regex::new(INDIVIDUAL_ROLL_REGEX).unwrap();
     if !roll_regex.is_match(roll_string) {
@@ -36,6 +36,7 @@ fn resolve_dice_roll(roll_string: &str) -> Result<(String, Vec<i32>), WakeBotErr
     let max = (&capture[2]).parse::<i32>().unwrap();
     let mut total = 0;
     let mut rolls = vec![];
+    let mut discarded_rolls = vec![];
     for _ in 0..quantity {
         let roll_result: i32 = rand::thread_rng().gen_range(1..=max);
         rolls.push(roll_result);
@@ -54,7 +55,7 @@ fn resolve_dice_roll(roll_string: &str) -> Result<(String, Vec<i32>), WakeBotErr
                 rolls.reverse();
             }
             println!("{:?}", rolls);
-            rolls.splice(count.., vec![]);
+            discarded_rolls = rolls.splice(count.., vec![]).collect::<Vec<i32>>();
             println!("{:?}", rolls);
         }
     }
@@ -71,21 +72,21 @@ fn resolve_dice_roll(roll_string: &str) -> Result<(String, Vec<i32>), WakeBotErr
             .join(" + "),
         total
     );
-    Ok((total.to_string(), rolls))
+    Ok((total.to_string(), rolls, discarded_rolls))
 }
 
-pub fn calculate_roll_string(roll: &str) -> (f64, Vec<(String, Vec<i32>)>) {
+pub fn calculate_roll_string(roll: &str) -> (f64, Vec<(String, Vec<i32>, Vec<i32>)>) {
     let regex = Regex::new(INDIVIDUAL_ROLL_REGEX).unwrap();
     let mut roll = String::from(roll);
 
     let mut done = false;
-    let mut roll_representation: Vec<(String, Vec<i32>)> = vec![];
+    let mut roll_representation: Vec<(String, Vec<i32>, Vec<i32>)> = vec![];
     while !done {
         let mut resolved_roll = None;
         let range = regex.find(&roll).map(|mat| {
-            if let Ok((result, rolls)) = resolve_dice_roll(mat.as_str()) {
+            if let Ok((result, rolls, discarded_rolls)) = resolve_dice_roll(mat.as_str()) {
                 resolved_roll = Some(result);
-                roll_representation.push((String::from(mat.as_str()), rolls))
+                roll_representation.push((String::from(mat.as_str()), rolls, discarded_rolls))
             } else {
                 panic!("Matched w/ range but no dice resolution.");
             }
@@ -97,7 +98,7 @@ pub fn calculate_roll_string(roll: &str) -> (f64, Vec<(String, Vec<i32>)>) {
             done = true;
         }
     }
-    let expr = ShuntingParser::parse_str(&roll).unwrap();
+    let expr = ShuntingParser::parse_str(&roll[1..]).unwrap();
     let result = MathContext::new().eval(&expr).unwrap();
     (result, roll_representation)
 }
