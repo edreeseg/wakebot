@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use chrono::{DateTime, FixedOffset, Utc};
-use regex::Regex;
+use fancy_regex::Regex;
 use rolls::{calculate_roll_string, format_rolls_result, ROLL_COMMAND_REGEX, ROLL_REGEX};
 use serenity::async_trait;
 use serenity::model::channel::Message;
@@ -139,7 +139,7 @@ impl EventHandler for Handler {
                 }
                 let action_name = String::from(args[1]);
                 let valid_action_regex = Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
-                if !valid_action_regex.is_match(&action_name) {
+                if !valid_action_regex.is_match(&action_name).unwrap_or(false) {
                     msg.reply(&ctx.http, "Invalid action name")
                         .await
                         .expect("Failed to reply");
@@ -181,7 +181,7 @@ impl EventHandler for Handler {
                         let roll_input = args[2..].join(" ");
                         // Use regex to validate roll string
                         let roll_regex = Regex::new(ROLL_REGEX).unwrap();
-                        if !roll_regex.is_match(&roll_input) {
+                        if !roll_regex.is_match(&roll_input).unwrap_or(false) {
                             msg.reply(&ctx.http, "Invalid roll string")
                                 .await
                                 .expect("Failed to reply");
@@ -205,7 +205,7 @@ impl EventHandler for Handler {
                     }
                 }
             }
-            if dice_command_regex.is_match(content) {
+            if dice_command_regex.is_match(content).unwrap_or(false) {
                 // Error handling needed
                 let rolls_result = calculate_roll_string(content);
                 match msg
