@@ -1,4 +1,8 @@
 use anyhow::anyhow;
+use aws::{
+    add_or_update_action, create_aws_client, create_credentials_provider, get_action_roll, Action,
+    WakeBotGetError,
+};
 use chrono::{DateTime, FixedOffset, Utc};
 use fancy_regex::Regex;
 use rolls::{calculate_roll_string, format_rolls_result, ROLL_COMMAND_REGEX, ROLL_REGEX};
@@ -9,10 +13,10 @@ use serenity::model::prelude::GuildChannel;
 use serenity::prelude::*;
 use shuttle_persist::PersistInstance;
 use shuttle_secrets::SecretStore;
-use std::collections::HashMap;
 use std::time::Duration;
 use youtube::VideoResult;
 
+mod aws;
 mod errors;
 mod rolls;
 mod youtube;
@@ -20,6 +24,7 @@ mod youtube;
 const DEFAULT_TIMESTAMP: &str = "2023-02-21T00:00:00Z";
 
 struct Handler {
+    aws_client: aws_sdk_dynamodb::Client,
     youtube_api_key: String,
     persist: PersistInstance,
     allowed_channels: Vec<String>,
@@ -146,62 +151,82 @@ impl EventHandler for Handler {
                     return;
                 }
                 if args.len() == 2 {
-                    // Add action to persist
-                    if let Ok(actions) = self.persist.load::<HashMap<String, String>>("actions") {
-                        if let Some(roll) = actions.get(&action_name) {
-                            // Use roll
-                            let rolls_result = calculate_roll_string(roll);
-                            match msg
-                                .reply(
-                                    &ctx.http,
-                                    format!(
-                                        "{}\n{}",
-                                        String::from("**") + &action_name + "**",
-                                        format_rolls_result(roll, rolls_result)
-                                    ),
-                                )
-                                .await
-                            {
-                                Ok(_) => println!("Reply sent with result"),
-                                Err(e) => println!("There was a problem sending result: {}", e),
-                            };
-                        } else {
+                    let roll = match get_action_roll(&self.aws_client, &action_name).await {
+                        Ok(r) => r,
+                        Err(WakeBotGetError::NotFound(_)) => {
                             msg.reply(
                                 &ctx.http,
-                                format!("No action called '{}' found.", action_name),
+                                format!("No action named '{}' found.", action_name),
                             )
                             .await
-                            .expect("Failed to reply");
+                            .expect("Problem sending response");
                             return;
                         }
-                    }
-                } else {
-                    if let Ok(mut actions) = self.persist.load::<HashMap<String, String>>("actions")
+                        _ => {
+                            msg.reply(
+                                &ctx.http,
+                                String::from("There was a problem while fetching action."),
+                            )
+                            .await
+                            .expect("Problem sending response");
+                            return;
+                        }
+                    };
+                    let rolls_result = calculate_roll_string(&roll);
+                    match msg
+                        .reply(
+                            &ctx.http,
+                            format!(
+                                "{}\n{}",
+                                String::from("**") + &action_name + "**",
+                                format_rolls_result(&roll, rolls_result)
+                            ),
+                        )
+                        .await
                     {
-                        let roll_input = args[2..].join(" ");
-                        // Use regex to validate roll string
-                        let roll_regex = Regex::new(ROLL_REGEX).unwrap();
-                        if !roll_regex.is_match(&roll_input).unwrap_or(false) {
-                            msg.reply(&ctx.http, "Invalid roll string")
-                                .await
-                                .expect("Failed to reply");
-                            return;
-                        }
-                        let had_action = actions.contains_key(&action_name);
-                        actions.insert(action_name.clone(), roll_input);
-                        self.persist
-                            .save("actions", actions)
-                            .expect("Failed to save new action.");
+                        Ok(_) => println!("Reply sent with result"),
+                        Err(e) => println!("There was a problem sending result: {}", e),
+                    };
+                } else {
+                    let roll_input = args[2..].join(" ");
+                    // Use regex to validate roll string
+                    let roll_regex = Regex::new(ROLL_REGEX).unwrap();
+                    if !roll_regex.is_match(&roll_input).unwrap_or(false) {
+                        msg.reply(&ctx.http, "Invalid roll string")
+                            .await
+                            .expect("Failed to reply");
+                        return;
+                    }
+                    let item_existed = get_action_roll(&self.aws_client, &action_name)
+                        .await
+                        .is_ok();
+
+                    if let Ok(_) = add_or_update_action(
+                        &self.aws_client,
+                        Action {
+                            name: String::from(&action_name),
+                            roll: roll_input,
+                        },
+                    )
+                    .await
+                    {
+                        // Send msg
                         msg.reply(
                             &ctx.http,
                             format!(
                                 "Action '{}' {}.",
                                 action_name,
-                                if had_action { "updated" } else { "added" }
+                                if item_existed { "updated" } else { "created" }
                             ),
                         )
                         .await
                         .expect("Failed to reply");
+                        return;
+                    } else {
+                        msg.reply(&ctx.http, "Failed to add action.")
+                            .await
+                            .expect("Failed to reply");
+                        return;
                     }
                 }
             }
@@ -271,15 +296,24 @@ pub async fn serenity(
     let intents =
         GatewayIntents::GUILDS | GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
 
-    if let Err(_) = persist.load::<HashMap<String, String>>("actions") {
-        let actions_map: HashMap<String, String> = HashMap::new();
-        persist
-            .save("actions", actions_map)
-            .expect("Failed to create actions map.");
-    }
+    let aws_access_key = if let Some(id) = secret_store.get("AWS_ACCESS_KEY_ID") {
+        id
+    } else {
+        return Err(anyhow!("'AWS_ACCESS_KEY_ID' was not found").into());
+    };
+
+    let aws_secret_access_key = if let Some(id) = secret_store.get("AWS_SECRET_ACCESS_KEY") {
+        id
+    } else {
+        return Err(anyhow!("'AWS_SECRET_ACCESS_KEY' was not found").into());
+    };
+
+    let aws_creds = create_credentials_provider(&aws_access_key, &aws_secret_access_key);
+    let aws_client = create_aws_client(aws_creds).await;
 
     let mut client = Client::builder(&discord_token, intents)
         .event_handler(Handler {
+            aws_client,
             youtube_api_key,
             persist,
             allowed_channels: vec![outsiders_channel_id, test_channel_id],
