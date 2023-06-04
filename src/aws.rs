@@ -43,7 +43,7 @@ pub async fn add_or_update_action(
     request.send().await
 }
 
-pub async fn _delete_action(
+pub async fn delete_action(
     client: &Client,
     action_name: &str,
 ) -> Result<DeleteItemOutput, SdkError<DeleteItemError>> {
@@ -79,10 +79,5 @@ pub async fn get_action_roll(
             "Action does not exist.",
         )));
     };
-    println!("FIRST: {:?}", str);
-    let str = str.get("roll").unwrap();
-    println!("SECOND: {:?}", str);
-    let str = str.as_s().unwrap();
-    println!("{}", str);
-    Ok(String::from(str))
+    Ok(String::from(str.get("roll").unwrap().as_s().unwrap()))
 }

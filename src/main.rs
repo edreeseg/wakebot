@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use aws::{
-    add_or_update_action, create_aws_client, create_credentials_provider, get_action_roll, Action,
-    WakeBotGetError,
+    add_or_update_action, create_aws_client, create_credentials_provider, delete_action,
+    get_action_roll, Action, WakeBotGetError,
 };
 use chrono::{DateTime, FixedOffset, Utc};
 use fancy_regex::Regex;
@@ -187,6 +187,44 @@ impl EventHandler for Handler {
                         Ok(_) => println!("Reply sent with result"),
                         Err(e) => println!("There was a problem sending result: {}", e),
                     };
+                } else if args[1].eq("delete") {
+                    if args.len() > 3 {
+                        msg.reply(
+                            &ctx.http,
+                            "Invalid delete request.\nFormat should be '!action delete <name>'",
+                        )
+                        .await
+                        .expect("Failed to reply");
+                        return;
+                    }
+                    if let Some(name) = args.get(2) {
+                        let item_existed = get_action_roll(&self.aws_client, name).await.is_ok();
+                        if !item_existed {
+                            msg.reply(&ctx.http, format!("Action '{}' does not exist.", name))
+                                .await
+                                .expect("Failed to reply");
+                            return;
+                        }
+                        if let Ok(_) = delete_action(&self.aws_client, name).await {
+                            msg.reply(&ctx.http, "Action deleted.")
+                                .await
+                                .expect("Failed to reply");
+                            return;
+                        } else {
+                            msg.reply(&ctx.http, "Failed to delete action.")
+                                .await
+                                .expect("Failed to reply");
+                            return;
+                        }
+                    } else {
+                        msg.reply(
+                            &ctx.http,
+                            "Invalid delete request.\nFormat should be '!action delete <name>'",
+                        )
+                        .await
+                        .expect("Failed to reply");
+                        return;
+                    }
                 } else {
                     let roll_input = args[2..].join(" ");
                     // Use regex to validate roll string
