@@ -166,7 +166,7 @@ pub fn calculate_roll_string(roll: &str) -> (f64, Vec<RollResult>) {
 
 pub fn format_rolls_result(original_string: &str, input: (f64, Vec<RollResult>)) -> String {
     let (result, rolls) = input;
-    let d20_regex = Regex::new(r"^\d+?d20").unwrap();
+    let d20_regex = Regex::new(r"^\d*d20").unwrap();
     format!(
         "{}\n{}\n{}",
         original_string,
