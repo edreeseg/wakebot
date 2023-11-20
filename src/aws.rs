@@ -56,28 +56,55 @@ pub async fn delete_action(
 }
 
 #[derive(std::fmt::Debug)]
-pub enum WakeBotGetError {
-    AWSError(SdkError<GetItemError>),
+pub enum WakeBotDbError {
+    AWSGetError(SdkError<GetItemError>),
+    AWSPutError(SdkError<PutItemError>),
     NotFound(WakeBotError),
 }
 
-pub async fn get_action_roll(
-    client: &Client,
-    action_name: &str,
-) -> Result<String, WakeBotGetError> {
+pub async fn get_action_roll(client: &Client, action_name: &str) -> Result<String, WakeBotDbError> {
     let str = client
         .get_item()
         .table_name("actions")
         .key("name", AttributeValue::S(action_name.into()))
         .send()
         .await
-        .map_err(|e| WakeBotGetError::AWSError(e))?;
+        .map_err(|e| WakeBotDbError::AWSGetError(e))?;
     let str = if let Some(val) = str.item() {
         val
     } else {
-        return Err(WakeBotGetError::NotFound(WakeBotError::new(
+        return Err(WakeBotDbError::NotFound(WakeBotError::new(
             "Action does not exist.",
         )));
     };
     Ok(String::from(str.get("roll").unwrap().as_s().unwrap()))
+}
+
+pub async fn increment_hehs(client: &Client) -> Result<i32, WakeBotDbError> {
+    let str = client
+        .get_item()
+        .table_name("actions")
+        .key("name", AttributeValue::S(String::from("heh")))
+        .send()
+        .await
+        .map_err(|e| WakeBotDbError::AWSGetError(e))?;
+    let num = if let Some(val) = str.item() {
+        val.get("roll")
+            .unwrap()
+            .as_n()
+            .unwrap()
+            .parse::<i32>()
+            .unwrap()
+    } else {
+        1
+    };
+    client
+        .put_item()
+        .table_name("actions")
+        .item("name", AttributeValue::S(String::from("heh")))
+        .item("roll", AttributeValue::S(num.to_string()))
+        .send()
+        .await
+        .map_err(|e| WakeBotDbError::AWSPutError(e))?;
+    Ok(num)
 }

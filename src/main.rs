@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use aws::{
     add_or_update_action, create_aws_client, create_credentials_provider, delete_action,
-    get_action_roll, Action, WakeBotGetError,
+    get_action_roll, increment_hehs, Action, WakeBotDbError,
 };
 use chrono::{DateTime, FixedOffset, Utc};
 use fancy_regex::Regex;
@@ -143,6 +143,12 @@ impl EventHandler for Handler {
                     msg.reply(&ctx.http, "Invalid request sent for action.\nTo add, format like: !action <name> <roll>\nTo use, format like: !action <name>").await.expect("Failed to reply");
                 }
                 let action_name = String::from(args[1]);
+                if action_name.eq("heh") {
+                    msg.reply(&ctx.http, "Cannot use action 'heh' due to Ed's laziness.")
+                        .await
+                        .expect("Failed to reply");
+                    return;
+                }
                 let valid_action_regex = Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
                 if !valid_action_regex.is_match(&action_name).unwrap_or(false) {
                     msg.reply(&ctx.http, "Invalid action name")
@@ -153,7 +159,7 @@ impl EventHandler for Handler {
                 if args.len() == 2 {
                     let roll = match get_action_roll(&self.aws_client, &action_name).await {
                         Ok(r) => r,
-                        Err(WakeBotGetError::NotFound(_)) => {
+                        Err(WakeBotDbError::NotFound(_)) => {
                             msg.reply(
                                 &ctx.http,
                                 format!("No action named '{}' found.", action_name),
@@ -278,6 +284,25 @@ impl EventHandler for Handler {
                     Ok(_) => println!("Reply sent with result"),
                     Err(e) => println!("There was a problem sending result: {}", e),
                 };
+            }
+
+            if content.eq("!heh") {
+                let heh_count = if let Ok(n) = increment_hehs(&self.aws_client).await {
+                    n
+                } else {
+                    // Throw error
+                    msg.reply(&ctx.http, "Heh, failed to get 'heh' count.")
+                        .await
+                        .expect("Failed to reply");
+                    return;
+                };
+                msg.reply(
+                    &ctx.http,
+                    format!("Heh, we've counted {} 'heh's.", heh_count),
+                )
+                .await
+                .expect("Failed to reply");
+                return;
             }
 
             if creator_message {
