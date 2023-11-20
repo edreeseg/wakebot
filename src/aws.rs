@@ -89,12 +89,14 @@ pub async fn increment_hehs(client: &Client) -> Result<i32, WakeBotDbError> {
         .await
         .map_err(|e| WakeBotDbError::AWSGetError(e))?;
     let num = if let Some(val) = str.item() {
-        val.get("roll")
+        let current_val = val
+            .get("roll")
             .unwrap()
-            .as_n()
+            .as_s()
             .unwrap()
             .parse::<i32>()
-            .unwrap()
+            .unwrap();
+        current_val + 1
     } else {
         1
     };
