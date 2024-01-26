@@ -305,7 +305,7 @@ impl EventHandler for Handler {
                 return;
             }
 
-            if content.eq("!wakebotsucks") {
+            if content.to_lowercase().eq("!wakebotsucks") {
             	msg.reply(&ctx.http, "https://y.yarn.co/ac2e41da-773a-4ae9-8012-b8c235994f9c_text.gif").await.expect("Failed to reply");
              	return;
             }
