@@ -270,25 +270,25 @@ impl EventHandler for Handler {
                 }
             }
             let dice_command_regex = Regex::new(DICE_COMMAND_REGEX).unwrap();
-            let commands_regex = Regex::new(r"( --(\w+))+$").unwrap();
+            let commands_regex = Regex::new(r"( ((--)|—)(\w+))+$").unwrap();
+            let command_regex = Regex::new(r" ((--)|—)(\w+)").unwrap();
             if dice_command_regex.is_match(content).unwrap_or(false) {
-                let commands_capture = commands_regex
-                    .captures_iter(&content)
-                    .filter_map(|result| result.ok());
                 let mut commands_start = content.len();
-                let commands = commands_capture
-                    .filter_map(|cap| {
-                        let whole_match = cap.get(0).unwrap();
-                        let start = whole_match.start();
-                        if start < commands_start {
-                            commands_start = start
-                        }
-                        cap.get(2)
-                    })
-                    .fold(HashMap::new(), |mut a, b| {
-                        a.insert(b.as_str(), true);
-                        a
-                    });
+                let command_str = commands_regex.find(content);
+                let commands = if let Ok(Some(mat)) = command_str {
+                    commands_start = mat.start();
+                    let command_capture = command_regex
+                        .captures_iter(mat.as_str())
+                        .filter_map(|result| result.ok())
+                        .filter_map(|cap| cap.get(3))
+                        .fold(HashMap::new(), |mut a, b| {
+                            a.insert(b.as_str(), true);
+                            a
+                        });
+                    command_capture
+                } else {
+                    HashMap::new()
+                };
                 let is_private = *commands.get("private").or(Some(&false)).unwrap();
 
                 let response_str = match interpret_rolls(&content[1..commands_start], 0) {
