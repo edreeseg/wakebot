@@ -5,20 +5,21 @@ use aws::{
 };
 use chrono::{DateTime, FixedOffset, Utc};
 use fancy_regex::Regex;
-use rolls::{calculate_roll_string, format_rolls_result, ROLL_COMMAND_REGEX, ROLL_REGEX};
+use rolls_v2::{format_rolls_result_new, interpret_rolls, DICE_COMMAND_REGEX};
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
 use serenity::model::prelude::GuildChannel;
 use serenity::prelude::*;
+use shunting::{MathContext, ShuntingParser};
 use shuttle_persist::PersistInstance;
 use shuttle_secrets::SecretStore;
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 use youtube::VideoResult;
 
 mod aws;
 mod errors;
-mod rolls;
+mod rolls_v2;
 mod youtube;
 
 const DEFAULT_TIMESTAMP: &str = "2023-02-21T00:00:00Z";
@@ -135,7 +136,9 @@ impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         let content = msg.content.trim();
         let creator_message = msg.author.name == "Roren" && msg.author.discriminator == 5950;
-        let dice_command_regex = Regex::new(ROLL_COMMAND_REGEX).unwrap();
+        if msg.author.bot {
+            return;
+        }
         if self.allowed_channels.contains(&msg.channel_id.to_string()) {
             if content.starts_with("!action ") {
                 let args = content.split(" ").collect::<Vec<&str>>();
@@ -178,21 +181,13 @@ impl EventHandler for Handler {
                             return;
                         }
                     };
-                    let rolls_result = calculate_roll_string(&roll);
-                    match msg
-                        .reply(
-                            &ctx.http,
-                            format!(
-                                "{}\n{}",
-                                String::from("**") + &action_name + "**",
-                                format_rolls_result(&roll, rolls_result)
-                            ),
-                        )
-                        .await
-                    {
-                        Ok(_) => println!("Reply sent with result"),
-                        Err(e) => println!("There was a problem sending result: {}", e),
-                    };
+                    let rolls_result = interpret_rolls(&roll, 0);
+                    if let Ok(result) = rolls_result {
+                        match msg.reply(&ctx.http, format_rolls_result_new(result)).await {
+                            Ok(_) => println!("Reply sent with result"),
+                            Err(e) => println!("There was a problem sending result: {}", e),
+                        };
+                    }
                 } else if args[1].eq("delete") {
                     if args.len() > 3 {
                         msg.reply(
@@ -234,7 +229,7 @@ impl EventHandler for Handler {
                 } else {
                     let roll_input = args[2..].join(" ");
                     // Use regex to validate roll string
-                    let roll_regex = Regex::new(ROLL_REGEX).unwrap();
+                    let roll_regex = Regex::new(DICE_COMMAND_REGEX).unwrap();
                     if !roll_regex.is_match(&roll_input).unwrap_or(false) {
                         msg.reply(&ctx.http, "Invalid roll string")
                             .await
@@ -274,17 +269,85 @@ impl EventHandler for Handler {
                     }
                 }
             }
+            let dice_command_regex = Regex::new(DICE_COMMAND_REGEX).unwrap();
+            let commands_regex = Regex::new(r"( --(\w+))+$").unwrap();
             if dice_command_regex.is_match(content).unwrap_or(false) {
-                // Error handling needed
-                let rolls_result = calculate_roll_string(content);
-                match msg
-                    .reply(&ctx.http, format_rolls_result(content, rolls_result))
-                    .await
-                {
-                    Ok(_) => println!("Reply sent with result"),
-                    Err(e) => println!("There was a problem sending result: {}", e),
+                let commands_capture = commands_regex
+                    .captures_iter(&content)
+                    .filter_map(|result| result.ok());
+                let mut commands_start = content.len();
+                let commands = commands_capture
+                    .filter_map(|cap| {
+                        let whole_match = cap.get(0).unwrap();
+                        let start = whole_match.start();
+                        if start < commands_start {
+                            commands_start = start
+                        }
+                        cap.get(2)
+                    })
+                    .fold(HashMap::new(), |mut a, b| {
+                        a.insert(b.as_str(), true);
+                        a
+                    });
+                let is_private = *commands.get("private").or(Some(&false)).unwrap();
+
+                let response_str = match interpret_rolls(&content[1..commands_start], 0) {
+                    Ok(result) => format_rolls_result_new(result),
+                    Err(e) => format!("Err: {}", e),
                 };
+                if is_private {
+                    let link = msg.link();
+                    msg.author
+                        .direct_message(&ctx.http, |m| {
+                            m.content(format!("{}\n{}", link, response_str))
+                        })
+                        .await
+                        .expect("Failed to direct message.");
+                } else {
+                    msg.reply(&ctx.http, response_str)
+                        .await
+                        .expect("Failed to reply.");
+                }
+                return;
             }
+
+            if content.starts_with("!") {
+                let exp = ShuntingParser::parse_str(&content[1..]);
+                let res = MathContext::new().eval(&exp.unwrap());
+                if res.is_ok() {
+                    msg.reply(
+                        &ctx.http,
+                        format!(
+                            "{} = **{}**",
+                            content[1..].replace("*", r"\*"),
+                            res.unwrap()
+                        ),
+                    )
+                    .await
+                    .expect("Failed to reply");
+                    return;
+                }
+            }
+
+            // TODO: Determine why code below this caused future across threads error
+
+            // Check if is math equation
+            // if let Ok(expr) = ShuntingParser::parse_str(content) {
+            //     if let Ok(result) = MathContext::new().eval(&expr) {
+            // msg.reply(
+            //     &ctx.http,
+            //     format!(
+            //         "**{}\n{}**",
+            //         content.replace("*", r"\*"),
+            //         format!("**{}**", result)
+            //     ),
+            // );
+            // return;
+            //     } else {
+            // msg.reply(&ctx.http, "Failed to successfully evaluate math.");
+            // return;
+            //     }
+            // }
 
             if content.eq("!heh") {
                 let heh_count = if let Ok(n) = increment_hehs(&self.aws_client).await {
@@ -306,8 +369,13 @@ impl EventHandler for Handler {
             }
 
             if content.to_lowercase().eq("!wakebotsucks") {
-            	msg.reply(&ctx.http, "https://y.yarn.co/ac2e41da-773a-4ae9-8012-b8c235994f9c_text.gif").await.expect("Failed to reply");
-             	return;
+                msg.reply(
+                    &ctx.http,
+                    "https://y.yarn.co/ac2e41da-773a-4ae9-8012-b8c235994f9c_text.gif",
+                )
+                .await
+                .expect("Failed to reply");
+                return;
             }
 
             if creator_message {

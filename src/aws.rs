@@ -34,7 +34,12 @@ pub async fn add_or_update_action(
     action: Action,
 ) -> Result<PutItemOutput, SdkError<PutItemError>> {
     let name_av = AttributeValue::S(action.name);
-    let roll_av = AttributeValue::S(action.roll);
+    // Remove prepended ! as we want to get rid of those
+    let roll_av = AttributeValue::S(if action.roll.starts_with("!") {
+        String::from(&action.roll[1..])
+    } else {
+        action.roll
+    });
     let request = client
         .put_item()
         .table_name("actions")
