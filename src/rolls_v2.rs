@@ -13,9 +13,6 @@ const ROLL_REGEX: &str =
     r"((\d*)d(\d+)((k|kh|kl)(\d+))?)(( ?[+*/-] ?(\d+(?!\.)|(\d*\.\d+))(?!d))*)";
 pub const DICE_COMMAND_REGEX: &str = r"!\d*d\d+((k|kh|kl)\d+)?";
 
-// Identify positioning of operators so we can split/skip them
-const OPERATOR_REGEX: &str = r"[+*/-]";
-
 const MAX_QUANTITY: usize = 1000;
 
 #[derive(Debug)]
