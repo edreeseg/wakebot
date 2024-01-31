@@ -297,6 +297,7 @@ impl EventHandler for Handler {
                 };
                 if is_private {
                     let link = msg.link();
+                    println!("Sent to {}:\n{}", msg.author.name, response_str);
                     msg.author
                         .direct_message(&ctx.http, |m| {
                             m.content(format!("{}\n{}", link, response_str))
