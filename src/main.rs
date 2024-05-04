@@ -13,7 +13,6 @@ use serenity::model::prelude::GuildChannel;
 use serenity::prelude::*;
 use shunting::{MathContext, ShuntingParser};
 use shuttle_persist::PersistInstance;
-use shuttle_secrets::SecretStore;
 use std::{collections::HashMap, time::Duration};
 use youtube::VideoResult;
 
@@ -405,7 +404,7 @@ impl EventHandler for Handler {
 
 #[shuttle_runtime::main]
 pub async fn serenity(
-    #[shuttle_secrets::Secrets] secret_store: SecretStore,
+    #[shuttle_runtime::Secrets] secret_store: shuttle_runtime::SecretStore,
     #[shuttle_persist::Persist] persist: PersistInstance,
 ) -> shuttle_serenity::ShuttleSerenity {
     let discord_token = if let Some(token) = secret_store.get("DISCORD_TOKEN") {
