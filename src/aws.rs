@@ -24,21 +24,21 @@ pub fn create_credentials_provider(access_key: &str, secret_key: &str) -> Creden
     Credentials::new(access_key, secret_key, None, None, "actions-provider")
 }
 
-pub struct Action {
-    pub name: String,
-    pub roll: String,
+pub struct Action<'a> {
+    pub name: &'a str,
+    pub roll: &'a str,
 }
 
-pub async fn add_or_update_action(
+pub async fn add_or_update_action<'a>(
     client: &Client,
-    action: Action,
+    action: &Action<'a>,
 ) -> Result<PutItemOutput, SdkError<PutItemError>> {
-    let name_av = AttributeValue::S(action.name);
+    let name_av = AttributeValue::S(String::from(action.name));
     // Remove prepended ! as we want to get rid of those
     let roll_av = AttributeValue::S(if action.roll.starts_with("!") {
         String::from(&action.roll[1..])
     } else {
-        action.roll
+        String::from(action.roll)
     });
     let request = client
         .put_item()

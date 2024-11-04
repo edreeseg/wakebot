@@ -2,233 +2,266 @@ use crate::errors::WakeBotError;
 use fancy_regex::Regex;
 use rand::Rng;
 use shunting::{MathContext, ShuntingParser};
+use std::fmt::Debug;
 
-pub const INDIVIDUAL_ROLL_REGEX: &str = r"(\d+)?d(\d+)((k|(kh)|(kl))(\d+))?";
-pub const ROLL_WITH_MODIFIERS_REGEX: &str =
-    r"(\d+)?d(\d+)((k|(kh)|(kl))(\d+))?(( ?[+*\/-] ?\d+(?!d))*)";
-pub const ROLL_REGEX: &str = r"^(((\d+)?d(\d+)((k|(kh)|(kl))(\d+))?)| |\d+|[+*/)()-])+$";
-pub const ROLL_COMMAND_REGEX: &str = r"^!(((\d+)?d(\d+)((k|(kh)|(kl))(\d+))?)| |\d+|[+*/)()-])+$";
+// Anything between parens, we are going to attempt to feed into the function. Panic and respond with an error if it isn't properly formatted
+// How to handle nested parens? I guess if this is the first step, to "step in" to the paren string, then we'd just step into whatever is in the parens infinitely
+const PAREN_REGEX: &str = r"\((.+)\)";
+
+// Isolate the rolls, so we can convert them into numbers and replace them in the string
+const ROLL_REGEX: &str =
+    r"((\d*)d(\d+)((k|kh|kl)(\d+))?)(( ?[+*/-] ?(\d+(?!\.)|(\d*\.\d+))(?!d))*)";
+pub const DICE_COMMAND_REGEX: &str = r"!\d*d\d+((k|kh|kl)\d+)?";
+
 const MAX_QUANTITY: usize = 1000;
 
-// Need to create human-readable summary of rolls
-
-fn resolve_dice_roll(
-    input: &str,
-) -> Result<(String, Vec<i32>, Vec<i32>, String, String), WakeBotError> {
-    let mut roll_string = String::from(input);
-    let roll_regex = Regex::new(INDIVIDUAL_ROLL_REGEX).unwrap();
-    if !roll_regex.is_match(&roll_string).unwrap_or(false) {
-        return Err(WakeBotError::new(
-            "Invalid argument passed to resolve_dice_roll.",
-        ));
-    }
-
-    let (capture, range, individual_roll) = if let Ok(cap) = roll_regex.captures(&roll_string) {
-        let mat = roll_regex.find(&roll_string).unwrap().unwrap();
-        (
-            cap.unwrap(),
-            mat.start()..=mat.end() - 1,
-            String::from(mat.as_str()),
-        )
-    } else {
-        panic!("No match for individual roll regex in resolve_dice_roll.");
-    };
-    let quantity = if let Some(_) = capture.get(1) {
-        (&capture[1]).parse::<usize>().unwrap()
-    } else {
-        1
-    };
-    if quantity > MAX_QUANTITY {
-        panic!("Max number of dice is {}", MAX_QUANTITY);
-    }
-    let max = (&capture[2]).parse::<i32>().unwrap();
-    let mut dice_result = 0;
-    let mut rolls = vec![];
-    let mut discarded_rolls = vec![];
-    for _ in 0..quantity {
-        let roll_result: i32 = rand::thread_rng().gen_range(1..=max);
-        rolls.push(roll_result);
-    }
-    let advantage_type = if let Some(_) = capture.get(4) {
-        Some(&capture[4])
-    } else {
-        None
-    };
-    if let Some(t) = advantage_type {
-        rolls.sort();
-        let count = (&capture[7]).parse::<usize>().unwrap();
-        if count < quantity {
-            if t.eq("k") || t.eq("kh") {
-                rolls.reverse();
-            }
-            discarded_rolls = rolls.splice(count.., vec![]).collect::<Vec<i32>>();
-        }
-    }
-    println!(
-        "Rolled {}, {} = {}",
-        roll_string,
-        rolls
-            .iter()
-            .map(|n| {
-                dice_result += n;
-                n.to_string()
-            })
-            .collect::<Vec<String>>()
-            .join(" + "),
-        dice_result
-    );
-    let roll_regex_with_modifiers = Regex::new(ROLL_WITH_MODIFIERS_REGEX).unwrap();
-    let modifier_capture = roll_regex_with_modifiers.captures(input);
-    let modifier_string = if let Ok(Some(mod_cap)) = modifier_capture {
-        if let Some(_) = mod_cap.get(8) {
-            let s = String::from(&mod_cap[8]);
-            s.replace(" ", "").chars().fold(String::new(), |acc, char| {
-                if char == '-' || char == '+' || char == '*' || char == '/' || char == '=' {
-                    acc + &format!(" {} ", char)
-                } else {
-                    acc + &String::from(char)
-                }
-            })
-        } else {
-            String::from("")
-        }
-    } else {
-        String::from("")
-    };
-    roll_string.replace_range(range, &dice_result.to_string());
-    let expr = ShuntingParser::parse_str(&roll_string).unwrap();
-    let result = MathContext::new().eval(&expr).unwrap();
-    let result = result.round() as i64;
-    Ok((
-        result.to_string(),
-        rolls,
-        discarded_rolls,
-        modifier_string,
-        individual_roll,
-    ))
-}
-
-#[derive(std::fmt::Debug)]
+#[derive(Debug)]
 pub struct RollResult {
-    total: String,
-    roll_string: String,
-    applied_rolls: Vec<i32>,
-    discarded_rolls: Vec<i32>,
-    modifier_string: String,
-    individual_roll: String,
+    pub original_text: String,
+    pub non_roll_portion: String,
+    pub rolls: Vec<i32>,
+    pub roll_total: u32,
+    // Critical success and failure detection is determined solely by coming up with 20 or 1 on a d20 roll
+    pub has_critical_success: bool,
+    pub has_critical_failure: bool,
+    sorting_priority: usize,
 }
 
-pub fn calculate_roll_string(roll: &str) -> (f64, Vec<RollResult>) {
-    let regex = Regex::new(ROLL_WITH_MODIFIERS_REGEX).unwrap();
-    let mut roll = String::from(roll);
-
-    let mut done = false;
-    let mut roll_representation: Vec<RollResult> = vec![];
-    while !done {
-        let mut resolved_roll = None;
-        let range = regex.find(&roll).map(|mat| {
-            if mat.is_none() {
-                return None;
-            }
-            let mat = mat.unwrap();
-            if let Ok((result, rolls, discarded_rolls, modifier_string, individual_roll)) =
-                resolve_dice_roll(mat.as_str())
-            {
-                resolved_roll = Some(result);
-                roll_representation.push(RollResult {
-                    total: resolved_roll.clone().unwrap(),
-                    roll_string: String::from(mat.as_str()),
-                    applied_rolls: rolls,
-                    discarded_rolls,
-                    modifier_string,
-                    individual_roll,
-                });
-            } else {
-                panic!("Matched w/ range but no dice resolution.");
-            }
-            Some(mat.start()..mat.end())
-        });
-        if let Ok(Some(r)) = range {
-            roll.replace_range(r, &resolved_roll.unwrap());
-        } else {
-            done = true;
+impl RollResult {
+    pub fn new(
+        original_text: String,
+        non_roll_portion: String,
+        rolls: Vec<i32>,
+        roll_total: u32,
+        has_critical_success: bool,
+        has_critical_failure: bool,
+        sorting_priority: usize,
+    ) -> Self {
+        RollResult {
+            original_text,
+            non_roll_portion,
+            rolls,
+            roll_total,
+            has_critical_success,
+            has_critical_failure,
+            // Sort by location found in string to order from left to right, not be evaluation order
+            sorting_priority,
         }
     }
-    let roll_sans_exclamation = if roll.starts_with("!") {
-        &roll[1..]
-    } else {
-        &roll
-    };
-    let expr = ShuntingParser::parse_str(roll_sans_exclamation).unwrap();
-    let result = MathContext::new().eval(&expr).unwrap();
-    (result, roll_representation)
 }
 
-pub fn format_rolls_result(original_string: &str, input: (f64, Vec<RollResult>)) -> String {
-    let (result, rolls) = input;
-    let d20_regex = Regex::new(r"^\d*d20").unwrap();
+#[derive(Debug)]
+pub struct RollStringResult<'a> {
+    pub original_text: &'a str,
+    pub converted_text: String,
+    pub rolls: Vec<RollResult>,
+}
+
+impl<'a> RollStringResult<'a> {
+    pub fn new(original_text: &'a str) -> Self {
+        RollStringResult {
+            converted_text: String::from(original_text),
+            original_text,
+            rolls: vec![],
+        }
+    }
+}
+
+// This accepts a roll string, which is a certain amount of numbers or rolls all separated by operators
+pub fn interpret_rolls<'a>(
+    input: &'a str,
+    input_offset: usize, // This is called recursively, keep track of where exactly we are evaluating in the string
+) -> Result<RollStringResult, WakeBotError> {
+    // Remove ! from beginning if it is there (legacy behavior from previously saved actions in AWS)
+    let input = if input.starts_with("!") {
+        &input[1..]
+    } else {
+        input
+    };
+    let mut result = RollStringResult::new(input);
+    // We will have checked that it is a valid input string before invoking
+
+    // Check for parens and recursively invoke as needed.
+    let paren_regex = Regex::new(PAREN_REGEX).unwrap();
+
+    // Target any parts of the string nested in params and replace them by recursively calling this function
+    loop {
+        let text_result: String;
+        let start: usize;
+        let end: usize;
+        match paren_regex.captures(&result.converted_text) {
+            Ok(Some(cap)) => {
+                let nested_string = cap.get(1).unwrap();
+                start = nested_string.start();
+                end = nested_string.end();
+                let mut nested_result = interpret_rolls(nested_string.as_str(), start).unwrap();
+                text_result = nested_result.converted_text;
+                result.rolls.append(&mut nested_result.rolls);
+            }
+            Ok(None) => break,
+            Err(_) => {
+                return Err(WakeBotError::new(
+                    "Error occurred while parsing paren regex",
+                ))
+            }
+        }
+        result.converted_text = String::from(&result.converted_text[0..start - 1])
+            + &text_result
+            + &result.converted_text[end + 1..];
+    }
+
+    let roll_regex = Regex::new(ROLL_REGEX).unwrap();
+
+    loop {
+        // Invoke function that handles rolling
+        match roll_regex.captures(&result.converted_text) {
+            Ok(Some(cap)) => {
+                let dice_count = cap.get(2).unwrap();
+                let dice_count = if let Ok(n) = dice_count.as_str().parse::<usize>() {
+                    n
+                } else {
+                    1
+                };
+                if dice_count > MAX_QUANTITY {
+                    return Err(WakeBotError::new(&format!(
+                        "Max number of dice is {}",
+                        MAX_QUANTITY
+                    )));
+                }
+                let dice_max = cap
+                    .get(3)
+                    .unwrap()
+                    .as_str()
+                    .parse::<usize>()
+                    .expect("Error while parsing dice max.");
+                let mut results = vec![];
+                for _ in 0..dice_count {
+                    let roll_result: i32 = rand::thread_rng()
+                        .gen_range(1..=dice_max)
+                        .try_into()
+                        .expect("Negative value generated by roll");
+                    results.push(roll_result);
+                }
+                let keep_str = cap.get(5);
+                let keep_count = cap.get(6);
+                let results_clone = results.clone();
+                let mut removed_indices = results_clone
+                    .iter()
+                    .enumerate()
+                    .collect::<Vec<(usize, &i32)>>();
+                removed_indices.sort_unstable_by(|a, b| a.1.cmp(b.1));
+                if let Some(str) = keep_str {
+                    let count = keep_count
+                        .expect("Keep string passed with no keep count.")
+                        .as_str()
+                        .parse::<i32>()
+                        .expect("Invalid keep count passed.");
+                    // results length limited by MAX_QUANTITY
+                    let mut number_to_remove: i32 = (results.len() as i32) - count;
+                    if number_to_remove < 0 {
+                        number_to_remove = 0;
+                    }
+                    if str.as_str().eq("kl") {
+                        removed_indices.reverse();
+                    }
+                    removed_indices.drain(number_to_remove as usize..removed_indices.len()); // Above condition ensures non-negative
+                    for (i, _) in removed_indices {
+                        results[i] = -results[i];
+                    }
+                }
+                let has_critical_success = dice_max == 20 && results.iter().any(|n| *n == 20);
+                let has_critical_failure = dice_max == 20 && results.iter().any(|n| *n == 1);
+                let roll_total = results.iter().fold(0, |mut a, b| {
+                    let n = *b;
+                    if n >= 0 {
+                        a += n as u32;
+                    }
+                    a
+                });
+                let dice_str = cap.get(1).unwrap();
+                let (start, end) = (dice_str.start(), dice_str.end());
+                let non_roll_portion = String::from(if let Some(str) = cap.get(7) {
+                    str.as_str()
+                } else {
+                    ""
+                });
+                let sorting_priority = result
+                    .converted_text
+                    .find(cap.get(0).unwrap().as_str())
+                    .unwrap()
+                    + input_offset;
+                // Do math here?
+                result.rolls.push(RollResult::new(
+                    String::from(dice_str.as_str()),
+                    non_roll_portion,
+                    results,
+                    roll_total,
+                    has_critical_success,
+                    has_critical_failure,
+                    sorting_priority,
+                ));
+                result.converted_text = String::from(&result.converted_text[0..start])
+                    + &roll_total.to_string()
+                    + &result.converted_text[end..];
+                // We've defined the rolls, now what do we do? Probably mutate the result instance to update its string.
+                // At what point do we determine what other math goes along with the roll?
+            }
+            Ok(None) => break,
+            Err(_) => return Err(WakeBotError::new("Error occurred while parsing roll regex")),
+        }
+    }
+
+    result
+        .rolls
+        .sort_by(|a, b| a.sorting_priority.cmp(&b.sorting_priority));
+
+    Ok(result)
+}
+
+pub fn format_rolls_result_new(result: RollStringResult) -> String {
+    let full_expr = ShuntingParser::parse_str(&result.converted_text).unwrap();
+    let full_result = MathContext::new().eval(&full_expr).unwrap();
     format!(
-        "{}\n{}\n{}",
-        original_string,
-        rolls
-            .iter()
-            .map(
-                |RollResult {
-                     total,
-                     roll_string,
-                     applied_rolls,
-                     discarded_rolls,
-                     modifier_string,
-                     individual_roll,
-                 }| {
-                    format!(
-                        "{} ({}{}{}) {} = {}{}",
-                        individual_roll,
-                        applied_rolls
-                            .iter()
-                            .map(|n| n.to_string())
-                            .collect::<Vec<String>>()
-                            .join(" + "),
-                        if discarded_rolls.len() == 0 {
-                            String::from("")
-                        } else {
-                            String::from(", ")
-                                + &discarded_rolls
-                                    .iter()
-                                    .map(|n| String::from("~~") + &n.to_string() + "~~")
-                                    .collect::<Vec<String>>()
-                                    .join(" + ")
-                        },
-                        if applied_rolls.len() + discarded_rolls.len() > 1 {
-                            format!(
-                                " = {}",
-                                applied_rolls.iter().fold(0, |mut acc, curr| {
-                                    acc += curr;
-                                    acc
-                                })
-                            )
-                        } else {
-                            String::from("")
-                        },
-                        modifier_string.trim(),
-                        total,
-                        {
-                            let mut str = String::from("");
-                            if d20_regex.is_match(roll_string).unwrap_or(false) {
-                                if applied_rolls.contains(&20) {
-                                    str += " - **CRITICAL SUCCESS!**";
-                                }
-                                if applied_rolls.contains(&1) {
-                                    str += " - **CRITICAL FAILURE!**";
-                                }
-                            }
-                            str
+        "{}\n{}{}**{}**",
+        result.original_text.replace("*", r"\*"),
+        result.rolls.iter().fold(String::from(""), |a, b| {
+            // Display each roll
+            let converted_text = b.roll_total.to_string() + &b.non_roll_portion;
+            let expr = ShuntingParser::parse_str(&converted_text).unwrap();
+            let result = MathContext::new().eval(&expr).unwrap();
+            a + &format!(
+                "{} ({} -> {}){} = {}{}{}\n",
+                b.original_text,
+                b.rolls
+                    .iter()
+                    .map(|&roll_num| {
+                        if roll_num < 0 {
+                            return String::from("~~") + &roll_num.abs().to_string() + "~~";
                         }
-                    )
+                        roll_num.to_string().replace("*", r"\*")
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", "),
+                b.roll_total,
+                b.non_roll_portion,
+                result,
+                if b.has_critical_success {
+                    " - **CRITICAL SUCCESS!**"
+                } else {
+                    ""
+                },
+                if b.has_critical_failure {
+                    " - **CRITICAL FAILURE!**"
+                } else {
+                    ""
                 }
             )
-            .collect::<Vec<String>>()
-            .join("\n"),
-        String::from("**") + &result.to_string() + "**"
+        }),
+        if result.rolls.len() > 1 {
+            result.converted_text.replace("*", r"\*") + "\n"
+        } else {
+            String::from("")
+        },
+        full_result
     )
 }

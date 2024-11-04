@@ -3,138 +3,29 @@ use aws::{
     add_or_update_action, create_aws_client, create_credentials_provider, delete_action,
     get_action_roll, increment_hehs, Action, WakeBotDbError,
 };
-use chrono::{DateTime, FixedOffset, Utc};
 use fancy_regex::Regex;
-use rolls_v2::{format_rolls_result_new, interpret_rolls, DICE_COMMAND_REGEX};
+use rolls::{format_rolls_result_new, interpret_rolls, DICE_COMMAND_REGEX};
 use serenity::async_trait;
 use serenity::model::channel::Message;
 use serenity::model::gateway::Ready;
 use serenity::model::prelude::GuildChannel;
 use serenity::prelude::*;
 use shunting::{MathContext, ShuntingParser};
-use shuttle_persist::PersistInstance;
-use std::{collections::HashMap, time::Duration};
-use youtube::VideoResult;
+use std::collections::HashMap;
 
 mod aws;
 mod errors;
-mod rolls_v2;
-mod youtube;
-
-const DEFAULT_TIMESTAMP: &str = "2023-02-21T00:00:00Z";
+mod rolls;
 
 struct Handler {
     aws_client: aws_sdk_dynamodb::Client,
-    youtube_api_key: String,
-    persist: PersistInstance,
     allowed_channels: Vec<String>,
-}
-
-impl Handler {
-    async fn retrieve(&self) -> Result<VideoResult, Box<dyn std::error::Error>> {
-        let timestamp = if let Ok(stamp) = self.persist.load::<DateTime<FixedOffset>>("timestamp") {
-            stamp
-        } else {
-            DateTime::parse_from_rfc3339(DEFAULT_TIMESTAMP)
-                .expect("Issue parsing default timestamp")
-        };
-        let new_videos = match youtube::get_new_videos(&self.youtube_api_key, timestamp).await {
-            Ok(data) => data,
-            Err(e) => {
-                println!("Big ol' err: {}", e);
-                return Err(anyhow!("There was a problem fetching new youtube videos").into());
-            }
-        };
-        Ok(new_videos)
-    }
-
-    async fn send_update_message(
-        &self,
-        ctx: Context,
-        triggering_msg: serenity::model::channel::Message,
-    ) {
-        let video_result = if let Ok(result) = self.retrieve().await {
-            result
-        } else {
-            return ();
-        };
-        let timestamp = if let Ok(stamp) = self.persist.load::<DateTime<FixedOffset>>("timestamp") {
-            stamp
-        } else {
-            return ();
-        };
-        let timestamp = timestamp.format("%Y/%m/%d %H:%M:%S");
-        let mut video_list = video_result.list.to_vec();
-        if video_list.is_empty() {
-            match triggering_msg
-                .channel_id
-                .say(
-                    &ctx.http,
-                    format!("No videos added to Bael's playlist since {}", timestamp),
-                )
-                .await
-            {
-                Ok(msg) => println!("Message sent: {:#?}", msg),
-                Err(e) => println!("Error sending message: {}", e),
-            }
-            self.persist
-                .save::<DateTime<FixedOffset>>(
-                    "timestamp",
-                    DateTime::parse_from_rfc3339(&Utc::now().to_rfc3339()).unwrap(),
-                )
-                .expect("Problem persisting timestamp.");
-            return ();
-        }
-        video_list.sort_by(|a, b| {
-            DateTime::parse_from_rfc3339(&a.timestamp)
-                .unwrap()
-                .cmp(&DateTime::parse_from_rfc3339(&b.timestamp).unwrap())
-        });
-        let updated_timestamp = DateTime::parse_from_rfc3339(&video_list.last().unwrap().timestamp);
-        let video_string = video_result
-            .list
-            .to_vec()
-            .iter()
-            .enumerate()
-            .map(|(idx, item)| {
-                format!(
-                    "{}. {} - https://www.youtube.com/watch?v={}",
-                    idx + 1,
-                    item.title,
-                    item.id
-                )
-            })
-            .fold(String::new(), |a, b| a + &b + "\n");
-        let msg = if video_result.overflow {
-            format!("More than five videos have been added to Bael's playlist since {} UTC.\nDisplaying the last five.\n\n{}", timestamp, video_string)
-        } else {
-            let has_one_video = video_list.len() == 1;
-            format!(
-                "{} video{} {} been added to Bael's playlist since {} UTC.\n\n{}",
-                video_list.len(),
-                if has_one_video { "" } else { "s" },
-                if has_one_video { "has" } else { "have" },
-                timestamp,
-                video_string
-            )
-        };
-        match triggering_msg.channel_id.say(&ctx.http, msg).await {
-            Ok(msg) => println!("Message sent: {:#?}", msg),
-            Err(e) => println!("Error sending message: {}", e),
-        }
-        self.persist
-            .save::<DateTime<FixedOffset>>("timestamp", updated_timestamp.unwrap())
-            .expect("Problem persisting timestamp.");
-        tokio::time::sleep(Duration::from_secs(60 * 60 * 24)).await; // One day
-        let _ = self.send_update_message(ctx, triggering_msg);
-    }
 }
 
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
         let content = msg.content.trim();
-        let creator_message = msg.author.name == "Roren" && msg.author.discriminator == 5950;
         if msg.author.bot {
             return;
         }
@@ -241,9 +132,9 @@ impl EventHandler for Handler {
 
                     if let Ok(_) = add_or_update_action(
                         &self.aws_client,
-                        Action {
-                            name: String::from(&action_name),
-                            roll: roll_input,
+                        &Action {
+                            name: &action_name,
+                            roll: &roll_input,
                         },
                     )
                     .await
@@ -377,21 +268,6 @@ impl EventHandler for Handler {
                 .expect("Failed to reply");
                 return;
             }
-
-            if creator_message {
-                if content.eq("!wakebot init") {
-                    self.send_update_message(ctx, msg).await;
-                } else if content.eq("!wakebot reset") {
-                    std::process::Command::new("ping");
-                    self.persist
-                        .save(
-                            "timestamp",
-                            DateTime::parse_from_rfc3339(DEFAULT_TIMESTAMP).unwrap(),
-                        )
-                        .unwrap();
-                    msg.channel_id.say(&ctx.http, "Bot reset").await.unwrap();
-                }
-            }
         }
     }
     async fn ready(&self, _ctx: Context, ready: Ready) {
@@ -405,17 +281,11 @@ impl EventHandler for Handler {
 #[shuttle_runtime::main]
 pub async fn serenity(
     #[shuttle_runtime::Secrets] secret_store: shuttle_runtime::SecretStore,
-    #[shuttle_persist::Persist] persist: PersistInstance,
 ) -> shuttle_serenity::ShuttleSerenity {
     let discord_token = if let Some(token) = secret_store.get("DISCORD_TOKEN") {
         token
     } else {
         return Err(anyhow!("'DISCORD_TOKEN' was not found").into());
-    };
-    let youtube_api_key = if let Some(key) = secret_store.get("YOUTUBE_API_KEY") {
-        key
-    } else {
-        return Err(anyhow!("'YOUTUBE_API_KEY' was not found").into());
     };
     let test_channel_id = if let Some(id) = secret_store.get("TEST_CHANNEL_ID") {
         id
@@ -450,8 +320,6 @@ pub async fn serenity(
     let mut client = Client::builder(&discord_token, intents)
         .event_handler(Handler {
             aws_client,
-            youtube_api_key,
-            persist,
             allowed_channels: vec![outsiders_channel_id, test_channel_id],
         })
         .await

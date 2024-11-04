@@ -119,7 +119,7 @@ dependencies = [
  "http",
  "hyper",
  "ring 0.16.20",
- "time 0.3.36",
+ "time",
  "tokio",
  "tower",
  "tracing",
@@ -279,7 +279,7 @@ dependencies = [
  "percent-encoding",
  "regex",
  "sha2",
- "time 0.3.36",
+ "time",
  "tracing",
 ]
 
@@ -386,7 +386,7 @@ dependencies = [
  "itoa",
  "num-integer",
  "ryu",
- "time 0.3.36",
+ "time",
 ]
 
 [[package]]
@@ -588,12 +588,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "16b0a3d9ed01224b22057780a37bb8c5dbfe1be8ba48678e7bf57ec4b385411f"
 dependencies = [
  "iana-time-zone",
- "js-sys",
  "num-integer",
  "num-traits",
  "serde",
- "time 0.1.45",
- "wasm-bindgen",
  "winapi",
 ]
 
@@ -1006,7 +1003,7 @@ checksum = "94b22e06ecb0110981051723910cbf0b5f5e09a2062dd7663334ee79a9d1286c"
 dependencies = [
  "cfg-if",
  "libc",
- "wasi 0.11.0+wasi-snapshot-preview1",
+ "wasi",
 ]
 
 [[package]]
@@ -1416,7 +1413,7 @@ checksum = "a4a650543ca06a924e8b371db273b2756685faae30f8487da1b56505a8f78b0c"
 dependencies = [
  "libc",
  "log",
- "wasi 0.11.0+wasi-snapshot-preview1",
+ "wasi",
  "windows-sys 0.48.0",
 ]
 
@@ -2168,7 +2165,7 @@ dependencies = [
  "serde",
  "serde-value",
  "serde_json",
- "time 0.3.36",
+ "time",
  "tokio",
  "tracing",
  "typemap_rev",
@@ -2559,17 +2556,6 @@ checksum = "3fdd6f064ccff2d6567adcb3873ca630700f00b5ad3f060c25b5dcfd9a4ce152"
 dependencies = [
  "cfg-if",
  "once_cell",
-]
-
-[[package]]
-name = "time"
-version = "0.1.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b797afad3f312d1c66a56d11d0316f916356d11bd158fbc6ca6389ff6bf805a"
-dependencies = [
- "libc",
- "wasi 0.10.0+wasi-snapshot-preview1",
- "winapi",
 ]
 
 [[package]]
@@ -3029,7 +3015,6 @@ dependencies = [
  "anyhow",
  "aws-config",
  "aws-sdk-dynamodb",
- "chrono",
  "fancy-regex",
  "rand",
  "reqwest",
@@ -3051,12 +3036,6 @@ dependencies = [
  "log",
  "try-lock",
 ]
-
-[[package]]
-name = "wasi"
-version = "0.10.0+wasi-snapshot-preview1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a143597ca7c7793eff794def352d41792a93c481eb1042423ff7ff72ba2c31f"
 
 [[package]]
 name = "wasi"
